@@ -1,6 +1,9 @@
-INTEGER, PLUS, MINUS, EOF = 'INTEGER', 'PLUS', 'MINUS', 'EOF'
+INTEGER, PLUS, MINUS, MUL, DIV, EOF, L_PAR, R_PAR = 'INTEGER', 'PLUS', 'MINUS', 'MUL', 'DIV', 'EOF', 'L_PAR', 'R_PAR'
 
 class Token(object):
+    '''
+    Token for arithmetic expression
+    '''
     def __init__(self, type, value):
         self.type = type
         self.value = value
@@ -11,14 +14,17 @@ class Token(object):
     def __str__(self):
         return self.__repr__()
 
-class Interpreter(object):
+
+class Lexer(object):
+    '''
+    Scanner: get tokens from the code
+    '''
     def __init__(self, text):
         self.text = self.del_spaces(text)
         self.len = len(self.text)
         self.pos = 0
-        self.current_token = None
         self.current_char = self.text[0] if self.text else None
-    
+
     @staticmethod
     def del_spaces(text):
         for char in ' \t\r\n':
@@ -27,21 +33,21 @@ class Interpreter(object):
 
     #### scanner code
     def error(self):
-        raise Exception("Invalid Syntax!")
-    
+        raise Exception("Invalid syntax")
+
     def advance(self):
         self.pos += 1
         if self.pos > self.len-1:
             self.current_char = None
         else:
             self.current_char = self.text[self.pos]
-    
+
     def integer(self):
         start = self.pos
         while self.current_char and self.current_char.isdigit():
             self.advance()
         return int(self.text[start:self.pos])
-   
+
     def get_next_token(self):
         if not self.current_char:
             return Token(EOF, None)
@@ -53,24 +59,59 @@ class Interpreter(object):
         elif self.current_char == '-':
             self.advance()
             return Token(MINUS, '-')
+        elif self.current_char == '*':
+            self.advance()
+            return Token(MUL, '*')
+        elif self.current_char == '/':
+            self.advance()
+            return Token(DIV, '/')
         else:
             self.error()
             return Token(EOF, None)
 
-    #### parser code
+
+class Interpreter(object):
+    '''
+    Parser for syntax analysis
+    '''
+    def __init__(self, lexer):
+        self.lexer = lexer
+        self.current_token = None
+
+    def error(self):
+        raise Exception("Invalid Syntax!")
+
     def eat(self, token_type):
         if self.current_token.type == token_type:
-            self.current_token = self.get_next_token()
+            self.current_token = self.lexer.get_next_token()
         else:
             self.error()
 
     def term(self):
+        result = self.factor()
+        while True:
+            token = self.current_token
+            if token.type == MUL:
+                self.eat(MUL)
+                result = result * self.factor()
+            elif token.type == DIV:
+                self.eat(DIV)
+                result = result / self.factor()
+            else:
+                return result
+
+    def factor(self):
         token = self.current_token
         self.eat(INTEGER)
         return token.value
 
     def expr(self):
-        self.current_token = self.get_next_token()
+        """Arithmetic expression parser / interpreter.
+        expr   : term ((PLUS | MINUS) term)*
+        term   : factor ((MUL | DIV) factor)*
+        factor : INTEGER
+        """
+        self.current_token = self.lexer.get_next_token()
         result = self.term()
 
         while self.current_token and self.current_token.type in (PLUS, MINUS):
@@ -82,7 +123,7 @@ class Interpreter(object):
                 result = result - self.term()
             else:
                 self.error()
-        
+
         return result
 
 
@@ -95,7 +136,8 @@ def main():
             continue
 
         try:
-            calc = Interpreter(text)
+            lexer = Lexer(text)
+            calc = Interpreter(lexer)
             print calc.expr()
         except Exception, exp:
             print str(exp)
