@@ -127,14 +127,12 @@ class Interpreter(object):
         """
         result = self.term()
         while self.current_token and self.current_token.type in (PLUS, MINUS):
-            if self.current_token.type == PLUS:
-                self.eat(PLUS)
+            token = self.current_token
+            self.eat(token.type)
+            if token.type == PLUS:
                 result = result + self.term()
-            elif self.current_token.type == MINUS:
-                self.eat(MINUS)
+            elif token.type == MINUS:
                 result = result - self.term()
-            else:
-                self.error('Invalid syntax')
 
         return result
 

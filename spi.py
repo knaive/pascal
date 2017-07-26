@@ -88,7 +88,6 @@ class BinaryOp(AST):
 
 class Parser(object):
     def __init__(self, lexer):
-        self.ast = None
         self.lexer = lexer
         self.current_token = lexer.get_next_token()
 
@@ -152,66 +151,42 @@ class NodeVisitor(object):
 
 class Interpreter(object):
     '''
-    Parser for syntax analysis
+    Interpreter for simple arithmetic expression
     '''
-    def __init__(self, lexer):
-        self.lexer = lexer
-        self.current_token = lexer.get_next_token()
-
-    def error(self, message):
-        raise Exception(message)
-
-    def eat(self, token_type):
-        if self.current_token.type == token_type:
-            self.current_token = self.lexer.get_next_token()
+    def __init__(self, ast):
+        self.ast = ast
+    
+    def visit(self, ast):
+        if not ast:
+            return 0
+        if ast.token.type == INTEGER:
+            return ast.token.value
         else:
-            self.error('Unexpected token: {0}'.format(self.current_token))
-
-    def term(self):
-        result = self.factor()
-        while True:
-            token = self.current_token
-            if token.type == MUL:
-                self.eat(MUL)
-                result = result * self.factor()
-            elif token.type == DIV:
-                self.eat(DIV)
-                result = result / self.factor()
+            op = None
+            if ast.token.type == PLUS:
+                op = lambda x,y: x+y
+            elif ast.token.type == MINUS:
+                op = lambda x,y: x-y
+            elif ast.token.type == MUL:
+                op = lambda x,y: x*y
+            elif ast.token.type == DIV:
+                op = lambda x,y: x/y
             else:
-                return result
-
-    def factor(self):
-        token = self.current_token
-        if token.type == INTEGER:
-            self.eat(INTEGER)
-            return token.value
-        elif token.type == L_PAR:
-            self.eat(L_PAR)
-            result = self.expr()
-            self.eat(R_PAR)
-            return result
-        else:
-            self.error('Unmatched parentheses')
+                raise Exception("Invalid Syntax")
+            
+            left = self.visit(ast.left)
+            right = self.visit(ast.right)
+            return op(left, right)
 
     def expr(self):
-        """Arithmetic expression parser / interpreter.
-        expr   : term ((PLUS | MINUS) term)*
-        term   : factor ((MUL | DIV) factor)*
-        factor : INTEGER | (L_PAR expr R_PAR)
-        """
-        result = self.term()
-        while self.current_token and self.current_token.type in (PLUS, MINUS):
-            if self.current_token.type == PLUS:
-                self.eat(PLUS)
-                result = result + self.term()
-            elif self.current_token.type == MINUS:
-                self.eat(MINUS)
-                result = result - self.term()
-            else:
-                self.error('Invalid syntax')
+        return self.visit(self.ast)
 
-        return result
-
+def evaluate(text):
+    lexer = Lexer(text)
+    parser = Parser(lexer)
+    ast = parser.parse()
+    calc = Interpreter(ast)
+    return calc.expr()
 
 def main():
     while True:
@@ -220,11 +195,8 @@ def main():
             return
         if not text:
             continue
-
         try:
-            lexer = Lexer(text)
-            parser = Parser(lexer)
-            ast = parser.parse()
+            print evaluate(text)
         except Exception, exp:
             print str(exp)
 
