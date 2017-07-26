@@ -32,8 +32,8 @@ class Lexer(object):
         return text
 
     #### scanner code
-    def error(self):
-        raise Exception("Invalid syntax")
+    def error(self, message):
+        raise Exception(message)
 
     def advance(self):
         self.pos += 1
@@ -65,8 +65,14 @@ class Lexer(object):
         elif self.current_char == '/':
             self.advance()
             return Token(DIV, '/')
+        elif self.current_char == '(':
+            self.advance()
+            return Token(L_PAR, '(')
+        elif self.current_char == ')':
+            self.advance()
+            return Token(R_PAR, ')')
         else:
-            self.error()
+            self.error('Unrecognized char: {0}'.format(self.current_char))
             return Token(EOF, None)
 
 
@@ -76,16 +82,16 @@ class Interpreter(object):
     '''
     def __init__(self, lexer):
         self.lexer = lexer
-        self.current_token = None
+        self.current_token = lexer.get_next_token()
 
-    def error(self):
-        raise Exception("Invalid Syntax!")
+    def error(self, message):
+        raise Exception(message)
 
     def eat(self, token_type):
         if self.current_token.type == token_type:
             self.current_token = self.lexer.get_next_token()
         else:
-            self.error()
+            self.error('Unexpected token: {0}'.format(self.current_token))
 
     def term(self):
         result = self.factor()
@@ -102,18 +108,24 @@ class Interpreter(object):
 
     def factor(self):
         token = self.current_token
-        self.eat(INTEGER)
-        return token.value
+        if token.type == INTEGER:
+            self.eat(INTEGER)
+            return token.value
+        elif token.type == L_PAR:
+            self.eat(L_PAR)
+            result = self.expr()
+            self.eat(R_PAR)
+            return result
+        else:
+            self.error('Unmatched parentheses')
 
     def expr(self):
         """Arithmetic expression parser / interpreter.
         expr   : term ((PLUS | MINUS) term)*
         term   : factor ((MUL | DIV) factor)*
-        factor : INTEGER
+        factor : INTEGER | (L_PAR expr R_PAR)
         """
-        self.current_token = self.lexer.get_next_token()
         result = self.term()
-
         while self.current_token and self.current_token.type in (PLUS, MINUS):
             if self.current_token.type == PLUS:
                 self.eat(PLUS)
@@ -122,7 +134,7 @@ class Interpreter(object):
                 self.eat(MINUS)
                 result = result - self.term()
             else:
-                self.error()
+                self.error('Invalid syntax')
 
         return result
 
