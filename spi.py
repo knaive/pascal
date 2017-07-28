@@ -94,6 +94,12 @@ class BinaryOp(AST):
         self.right = right
         self.op = self.token = op
 
+
+class Num(AST):
+    def __init__(self, token):
+        self.token = token
+
+
 class Parser(object):
     def __init__(self, lexer):
         self.lexer = lexer
@@ -121,7 +127,7 @@ class Parser(object):
         token = self.current_token
         if token.type == INTEGER:
             self.eat(INTEGER)
-            return BinaryOp(None, None, token)
+            return Num(token)
         elif token.type == L_PAR:
             self.eat(L_PAR)
             node = self.parse()
@@ -150,41 +156,37 @@ class NodeVisitor(object):
         pass
     
     def visit(self, ast):
-        if not ast:
-            return 0
-        if not ast.left and not ast.right:
-            return ast.token.value
-        self.visit(ast.left)
+        func_name = 'visit_' + type(ast).__name__
+        func = getattr(self, func_name)
+        return func(ast)
 
 
-class Interpreter(object):
+class Interpreter(NodeVisitor):
     '''
     Interpreter for simple arithmetic expression
     '''
     def __init__(self, ast):
         self.ast = ast
     
-    def visit(self, ast):
-        if not ast:
-            return 0
-        if ast.token.type == INTEGER:
-            return ast.token.value
+    def visit_BinaryOp(self, ast):
+        op = None
+        if ast.token.type == PLUS:
+            op = lambda x,y: x+y
+        elif ast.token.type == MINUS:
+            op = lambda x,y: x-y
+        elif ast.token.type == MUL:
+            op = lambda x,y: x*y
+        elif ast.token.type == DIV:
+            op = lambda x,y: x/y
         else:
-            op = None
-            if ast.token.type == PLUS:
-                op = lambda x,y: x+y
-            elif ast.token.type == MINUS:
-                op = lambda x,y: x-y
-            elif ast.token.type == MUL:
-                op = lambda x,y: x*y
-            elif ast.token.type == DIV:
-                op = lambda x,y: x/y
-            else:
-                raise Exception("Invalid Syntax")
-            
-            left = self.visit(ast.left)
-            right = self.visit(ast.right)
-            return op(left, right)
+            raise Exception("Invalid Syntax")
+        
+        left = self.visit(ast.left)
+        right = self.visit(ast.right)
+        return op(left, right)
+    
+    def visit_Num(self, ast):
+        return ast.token.value
 
     def expr(self):
         return self.visit(self.ast)
