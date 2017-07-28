@@ -1,3 +1,11 @@
+'''
+A simple interpreter which can evaluate integer arithmetic expression.abs
+Code is refactored into Lexer, Parser and Interpreter.
+Grammars ->
+    expr   : term ((PLUS | MINUS) term)*
+    term   : factor ((MUL | DIV) factor)*
+    factor : INTEGER | (L_PAR expr R_PAR)
+'''
 INTEGER, PLUS, MINUS, MUL, DIV, EOF, L_PAR, R_PAR = 'INTEGER', 'PLUS', 'MINUS', 'MUL', 'DIV', 'EOF', 'L_PAR', 'R_PAR'
 
 class Token(object):

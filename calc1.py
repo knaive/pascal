@@ -1,3 +1,6 @@
+'''
+A simple interpreter which can evaluate arithmetic expression containing +, -, *, /, (, ), and integers.
+'''
 INTEGER, PLUS, MINUS, MUL, DIV, EOF, L_PAR, R_PAR = 'INTEGER', 'PLUS', 'MINUS', 'MUL', 'DIV', 'EOF', 'L_PAR', 'R_PAR'
 
 class Token(object):

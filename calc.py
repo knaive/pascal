@@ -1,3 +1,6 @@
+'''
+Code which can only evaluate arithimetic expression containing +, - and integers.
+'''
 class Token(object):
     DIGITS = '0123456789'
     SPACES = ' \t\r\n'
