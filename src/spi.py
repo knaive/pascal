@@ -1,12 +1,17 @@
 '''
-A simple interpreter which can evaluate integer arithmetic expression.abs
+A simple interpreter which can evaluate integer arithmetic expression.
 Code is refactored into Lexer, Parser and Interpreter.
 Grammars ->
-    expr   : term ((PLUS | MINUS) term)*
+    expr   : term ((ADD | SUB) term)*
     term   : factor ((MUL | DIV) factor)*
-    factor : INTEGER | (L_PAR expr R_PAR)
+    factor : INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
 '''
-INTEGER, PLUS, MINUS, MUL, DIV, EOF, L_PAR, R_PAR = 'INTEGER', 'PLUS', 'MINUS', 'MUL', 'DIV', 'EOF', 'L_PAR', 'R_PAR'
+EOF = 'EOF'
+INTEGER = 'INTEGER'
+ADD, SUB, MUL, DIV = ('ADD', 'SUB', 'MUL', 'DIV')
+L_PAR, R_PAR = ('L_PAR', 'R_PAR')
+UNARY_ADD, UNARY_SUB = ('UNARY_ADD', 'UNARY_SUB')
+BINARY_OP = (ADD, SUB, MUL, DIV)
 
 class Token(object):
     '''
@@ -32,6 +37,7 @@ class Lexer(object):
         self.len = len(self.text)
         self.pos = 0
         self.current_char = self.text[0] if self.text else None
+        self.current_token = None
 
     @staticmethod
     def del_spaces(text):
@@ -59,29 +65,37 @@ class Lexer(object):
     def get_next_token(self):
         if not self.current_char:
             return Token(EOF, None)
-        elif self.current_char.isdigit():
-            return Token(INTEGER, self.integer())
-        elif self.current_char == '+':
-            self.advance()
-            return Token(PLUS, '+')
-        elif self.current_char == '-':
-            self.advance()
-            return Token(MINUS, '-')
-        elif self.current_char == '*':
-            self.advance()
-            return Token(MUL, '*')
-        elif self.current_char == '/':
-            self.advance()
-            return Token(DIV, '/')
-        elif self.current_char == '(':
-            self.advance()
-            return Token(L_PAR, '(')
-        elif self.current_char == ')':
-            self.advance()
-            return Token(R_PAR, ')')
+
+        next_token = None
+        if self.current_char.isdigit():
+            next_token = Token(INTEGER, self.integer())
         else:
-            self.error('Unrecognized char: {0}'.format(self.current_char))
-            return Token(EOF, None)
+            if self.current_char == '+':
+                if self.current_token.type in (L_PAR, ) + BINARY_OP:
+                    next_token = Token(UNARY_ADD, '+')
+                else:
+                    next_token = Token(ADD, '+')
+            elif self.current_char == '-':
+                if self.current_token.type in (L_PAR, ) + BINARY_OP:
+                    next_token = Token(UNARY_SUB, '-')
+                else:
+                    next_token = Token(SUB, '-')
+            elif self.current_char == '*':
+                next_token = Token(MUL, '*')
+            elif self.current_char == '/':
+                next_token = Token(DIV, '/')
+            elif self.current_char == '(':
+                next_token = Token(L_PAR, '(')
+            elif self.current_char == ')':
+                next_token = Token(R_PAR, ')')
+            self.advance()
+
+        if next_token:
+            self.current_token = next_token
+            return next_token
+
+        self.error('Unrecognized char: {0}'.format(self.current_char))
+        return Token(EOF, None)
 
 
 class AST(object):
@@ -100,6 +114,12 @@ class Num(AST):
         self.token = token
 
 
+class UnaryOp(AST):
+    def __init__(self, token, operand):
+        self.token = token
+        self.operand = operand
+
+
 class Parser(object):
     def __init__(self, lexer):
         self.lexer = lexer
@@ -112,9 +132,12 @@ class Parser(object):
         if self.current_token.type == token_type:
             self.current_token = self.lexer.get_next_token()
         else:
-            self.error('Unexpected token: {0}'.format(self.current_token))
+            self.error('Unexpected token: {0}. Expected: {1}'.format(self.current_token, token_type))
 
     def term(self):
+        ''' 
+        term: factor ((MUL | DIV) factor)* 
+        '''
         left = self.factor()
         while self.current_token.type in (MUL, DIV):
             token = self.current_token
@@ -124,6 +147,9 @@ class Parser(object):
         return left
 
     def factor(self):
+        '''
+        factor: INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+        '''
         token = self.current_token
         if token.type == INTEGER:
             self.eat(INTEGER)
@@ -133,17 +159,19 @@ class Parser(object):
             node = self.parse()
             self.eat(R_PAR)
             return node
+        elif token.type in (UNARY_ADD, UNARY_SUB):
+            self.eat(token.type)
+            operand = self.factor()
+            return UnaryOp(token, operand)
         else:
             self.error('Unmatched parentheses')
 
     def parse(self):
-        """Arithmetic expression parser.
-        expr   : term ((PLUS | MINUS) term)*
-        term   : factor ((MUL | DIV) factor)*
-        factor : INTEGER | (L_PAR expr R_PAR)
+        """
+        expr: term ((ADD | SUB) term)*
         """
         left = self.term()
-        while self.current_token and self.current_token.type in (PLUS, MINUS):
+        while self.current_token and self.current_token.type in (ADD, SUB):
             token = self.current_token
             self.eat(token.type)
             right = self.term()
@@ -170,16 +198,16 @@ class Interpreter(NodeVisitor):
     
     def visit_BinaryOp(self, ast):
         op = None
-        if ast.token.type == PLUS:
+        if ast.token.type == ADD:
             op = lambda x,y: x+y
-        elif ast.token.type == MINUS:
+        elif ast.token.type == SUB:
             op = lambda x,y: x-y
         elif ast.token.type == MUL:
             op = lambda x,y: x*y
         elif ast.token.type == DIV:
             op = lambda x,y: x/y
         else:
-            raise Exception("Invalid Syntax")
+            raise Exception("Unknown token: " + ast.token.type)
         
         left = self.visit(ast.left)
         right = self.visit(ast.right)
@@ -187,6 +215,18 @@ class Interpreter(NodeVisitor):
     
     def visit_Num(self, ast):
         return ast.token.value
+
+    def visit_UnaryOp(self, ast):
+        op = None
+        if ast.token.type == UNARY_SUB:
+            op = lambda x: -x 
+        elif ast.token.type == UNARY_ADD:
+            op = lambda x: x
+        else:
+            raise Exception("Unknown token: " + ast.token.type)
+        
+        value = self.visit(ast.operand)
+        return op(value)
 
     def expr(self):
         return self.visit(self.ast)
