@@ -71,12 +71,12 @@ class Lexer(object):
             next_token = Token(INTEGER, self.integer())
         else:
             if self.current_char == '+':
-                if self.current_token.type in (L_PAR, ) + BINARY_OP:
+                if not self.current_token or self.current_token.type in (L_PAR,) + BINARY_OP:
                     next_token = Token(UNARY_ADD, '+')
                 else:
                     next_token = Token(ADD, '+')
             elif self.current_char == '-':
-                if self.current_token.type in (L_PAR, ) + BINARY_OP:
+                if not self.current_token or self.current_token.type in (L_PAR,) + BINARY_OP:
                     next_token = Token(UNARY_SUB, '-')
                 else:
                     next_token = Token(SUB, '-')
