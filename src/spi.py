@@ -11,11 +11,12 @@ INTEGER = 'INTEGER'
 ADD, SUB, MUL, DIV = ('ADD', 'SUB', 'MUL', 'DIV')
 L_PAR, R_PAR = ('L_PAR', 'R_PAR')
 UNARY_ADD, UNARY_SUB = ('UNARY_ADD', 'UNARY_SUB')
+UNARY_OP = (UNARY_ADD, UNARY_SUB)
 BINARY_OP = (ADD, SUB, MUL, DIV)
 
 class Token(object):
     '''
-    Token for arithmetic expression
+    Token for integer arithmetic expressions
     '''
     def __init__(self, type, value):
         self.type = type
@@ -71,15 +72,15 @@ class Lexer(object):
             next_token = Token(INTEGER, self.integer())
         else:
             if self.current_char == '+':
-                if not self.current_token or self.current_token.type in (L_PAR,) + BINARY_OP:
-                    next_token = Token(UNARY_ADD, '+')
-                else:
+                if self.current_token and self.current_token.type in (R_PAR, INTEGER):
                     next_token = Token(ADD, '+')
-            elif self.current_char == '-':
-                if not self.current_token or self.current_token.type in (L_PAR,) + BINARY_OP:
-                    next_token = Token(UNARY_SUB, '-')
                 else:
+                    next_token = Token(UNARY_ADD, '+')
+            elif self.current_char == '-':
+                if self.current_token and self.current_token.type in (R_PAR, INTEGER):
                     next_token = Token(SUB, '-')
+                else:
+                    next_token = Token(UNARY_SUB, '-')
             elif self.current_char == '*':
                 next_token = Token(MUL, '*')
             elif self.current_char == '/':
@@ -92,6 +93,7 @@ class Lexer(object):
 
         if next_token:
             self.current_token = next_token
+            # print next_token
             return next_token
 
         self.error('Unrecognized char: {0}'.format(self.current_char))
@@ -99,10 +101,16 @@ class Lexer(object):
 
 
 class AST(object):
+    '''
+    Abstract Syntax Tree
+    '''
     pass
 
 
 class BinaryOp(AST):
+    '''
+    Binary operator node in abstract syntax tree
+    '''
     def __init__(self, left, right, op):
         self.left = left
         self.right = right
@@ -110,17 +118,30 @@ class BinaryOp(AST):
 
 
 class Num(AST):
+    '''
+    Number node in abstract syntax tree
+    '''
     def __init__(self, token):
         self.token = token
 
 
 class UnaryOp(AST):
+    '''
+    Unary operator node in abstract syntax tree
+    '''
     def __init__(self, token, operand):
         self.token = token
         self.operand = operand
 
 
 class Parser(object):
+    '''
+    A integer arithmetic expression parser
+    Grammars ->
+    expr   : term ((ADD | SUB) term)*
+    term   : factor ((MUL | DIV) factor)*
+    factor : INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+    '''
     def __init__(self, lexer):
         self.lexer = lexer
         self.current_token = lexer.get_next_token()
@@ -135,8 +156,8 @@ class Parser(object):
             self.error('Unexpected token: {0}. Expected: {1}'.format(self.current_token, token_type))
 
     def term(self):
-        ''' 
-        term: factor ((MUL | DIV) factor)* 
+        '''
+        term: factor ((MUL | DIV) factor)*
         '''
         left = self.factor()
         while self.current_token.type in (MUL, DIV):
@@ -180,13 +201,77 @@ class Parser(object):
 
 
 class NodeVisitor(object):
+    '''
+    Dispatch a visit to a specific AST node to a specialized method
+    '''
     def __init__(self):
         pass
-    
+
     def visit(self, ast):
+        '''
+        Call visit methods per type of token stored in the node
+        '''
         func_name = 'visit_' + type(ast).__name__
         func = getattr(self, func_name)
         return func(ast)
+
+class RPNConverter(NodeVisitor):
+    '''
+    Convert AST to Reverse Polish Notation
+    '''
+    def __init__(self, ast):
+        '''
+        set abstract syntax tree
+        '''
+        self.ast = ast
+    
+    def get_rpn(self):
+        '''
+        get reverse polish notation
+        '''
+        return self.visit(self.ast)
+    
+    def visit_BinaryOp(self, ast):
+        left = self.visit(ast.left)
+        right = self.visit(ast.right)
+        return '{0} {1} {2}'.format(left, right, ast.token.value)
+    
+    def visit_UnaryOp(self, ast):
+        operand = self.visit(ast.operand)
+        return '{0} {1}'.format(operand, ast.token.value)
+    
+    def visit_Num(self, ast):
+        return '{0}'.format(ast.token.value)
+
+
+class ListExpressionConverter(NodeVisitor):
+    '''
+    Convert AST to List Expression
+    '''
+    def __init__(self, ast):
+        '''
+        set abstract syntax tree
+        '''
+        self.ast = ast
+    
+    def get_list_expr(self):
+        '''
+        get list expression
+        '''
+        return self.visit(self.ast)
+    
+    def visit_BinaryOp(self, ast):
+        op = ast.token.value
+        left = self.visit(ast.left)
+        right = self.visit(ast.right)
+        return '({0} {1} {2})'.format(op, left, right)
+    
+    def visit_UnaryOp(self, ast):
+        operand = self.visit(ast.operand)
+        return '({0} {1})'.format(ast.token.value, operand)
+    
+    def visit_Num(self, ast):
+        return '{0}'.format(ast.token.value)
 
 
 class Interpreter(NodeVisitor):
@@ -232,6 +317,9 @@ class Interpreter(NodeVisitor):
         return self.visit(self.ast)
 
 def evaluate(text):
+    '''
+    Shortcut to evaluate an integer arithmetic expression
+    '''
     lexer = Lexer(text)
     parser = Parser(lexer)
     ast = parser.parse()
