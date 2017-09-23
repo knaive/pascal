@@ -28,6 +28,7 @@ import re
 
 EOF = 'EOF'
 SEMI = 'SEMI'
+EMPTY = 'EMPTY'
 DOT = 'DOT'
 KEY_WORDS = (BEGIN, END) = ('BEGIN', 'END')
 
@@ -36,6 +37,7 @@ VAR = 'VAR'
 
 BINARY_OP = (ADD, SUB, MUL, DIV, ASSIGN) = ('ADD', 'SUB', 'MUL', 'DIV', 'ASSIGN')
 UNARY_OP = (UNARY_ADD, UNARY_SUB) = ('UNARY_ADD', 'UNARY_SUB')
+COMPOUND = 'COMPOUND'
 
 L_PAR, R_PAR = ('L_PAR', 'R_PAR')
 
@@ -180,16 +182,6 @@ class AST(object):
     pass
 
 
-class BinaryOp(AST):
-    '''
-    Binary operator node in abstract syntax tree
-    '''
-    def __init__(self, left, right, op):
-        self.left = left
-        self.right = right
-        self.op = self.token = op
-
-
 class Num(AST):
     '''
     Number node in abstract syntax tree
@@ -200,33 +192,163 @@ class Num(AST):
 
 class UnaryOp(AST):
     '''
-    Unary operator node in abstract syntax tree
+    Unary operator node in AST
     '''
     def __init__(self, token, operand):
         self.token = token
         self.operand = operand
 
 
+class BinaryOp(AST):
+    '''
+    Binary operator node in AST
+    '''
+    def __init__(self, left, right, op):
+        self.left = left
+        self.right = right
+        self.op = self.token = op
+
+class NaryOp(AST):
+    '''
+    Operator with more than 2 operands in AST
+    '''
+    def __init__(self, operands, op):
+        '''
+        operands: a list containing the operands by the order left to right
+        '''
+        self.operands = operands
+        self.op = self.token = op
+
+class Variable(AST):
+    '''
+    Variable node in AST
+    '''
+    def __init__(self, token):
+        self.token = token
+
+class Empty(AST):
+    def __init__(self, token):
+        self.token = token
+
+
+class SymbolTable(object):
+    _table = {}
+
+    @classmethod
+    def save(cls, var_name, value):
+        cls._table[var_name] = value
+    
+    @classmethod
+    def lookup(cls, var_name):
+        return cls._table.get(var_name, None)
+
+
 class Parser(object):
     '''
-    A integer arithmetic expression parser
+    A simple pascal parser
     Grammars ->
-    expr   : term ((ADD | SUB) term)*
-    term   : factor ((MUL | DIV) factor)*
-    factor : INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+    program             : compound_statement DOT
+    compound_statement  : BEGIN statement_list END
+    statement_list      : statement | statement SEMI statement_list
+    statement           : compound_statement | assignment | empty
+    assignment          : VAR ASSIGN expr
+    expr                : term ((ADD | SUB) term)*
+    term                : factor ((MUL | DIV) factor)*
+    factor              : INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
     '''
     def __init__(self, lexer):
         self.lexer = lexer
         self.current_token = lexer.get_next_token()
+        self.peeked_tokens = []
 
     def error(self, message):
+        '''
+        Report an error
+        '''
         raise Exception(message)
 
     def eat(self, token_type):
+        '''
+        Try to get the next token with type token_type
+        '''
         if self.current_token.type == token_type:
-            self.current_token = self.lexer.get_next_token()
+            if self.peeked_tokens:
+                self.current_token = self.peeked_tokens[0]
+                self.peeked_tokens.remove(self.current_token)
+            else:
+                self.current_token = self.lexer.get_next_token()
         else:
             self.error('Unexpected token: {0}. Expected: {1}'.format(self.current_token, token_type))
+    
+    def peek(self):
+        token = self.lexer.get_next_token()
+        self.peeked_tokens.append(token)
+        return token
+
+    def parse(self):
+        return self.program()
+
+    def program(self):
+        root = self.compound_statement()
+        self.eat(DOT)
+        return root
+    
+    def compound_statement(self):
+        self.eat(BEGIN)
+        st_list = []
+        self.statement_list(st_list)
+        self.eat(END)
+        token = Token(COMPOUND, 'COMPOUND')
+        return NaryOp(st_list, token)
+    
+    def statement_list(self, st_list):
+        st = self.statement()
+        st_list.append(st)
+        if self.current_token.type != SEMI:
+            return st_list
+        self.statement_list(st_list)
+    
+    def statement(self):
+        '''
+        statement: compound_statement | assignment | empty
+        '''
+        # compound_satement next
+        if self.current_token.type == BEGIN:
+            return self.compound_statement
+        # assignment next
+        elif self.current_token.type == VAR:
+            return self.assignment()
+        else:
+            return self.empty()
+
+    def empty(self):
+        return Empty(Token(EMPTY, 'EMPTY'))
+    
+    def assignment(self):
+        """
+        assignment : VAR ASSIGN expr
+        """
+        var = self.variable()
+        assign_token = self.eat(ASSIGN)
+        right_operand = self.expr()
+        assign = BinaryOp(var, right_operand, assign_token)
+        return assign
+
+    def variable(self):
+        var = self.eat(VAR)
+        return Variable(var)
+
+    def expr(self):
+        """
+        expr: term ((ADD | SUB) term)*
+        """
+        left = self.term()
+        while self.current_token and self.current_token.type in (ADD, SUB):
+            token = self.current_token
+            self.eat(token.type)
+            right = self.term()
+            left = BinaryOp(left, right, token)
+        return left
 
     def term(self):
         '''
@@ -242,12 +364,15 @@ class Parser(object):
 
     def factor(self):
         '''
-        factor: INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+        factor: INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
         '''
         token = self.current_token
         if token.type == INTEGER:
             self.eat(INTEGER)
             return Num(token)
+        elif token.type == VAR:
+            self.eat(VAR)
+            return Variable(token)
         elif token.type == L_PAR:
             self.eat(L_PAR)
             node = self.parse()
@@ -259,18 +384,6 @@ class Parser(object):
             return UnaryOp(token, operand)
         else:
             self.error('Unmatched parentheses')
-
-    def parse(self):
-        """
-        expr: term ((ADD | SUB) term)*
-        """
-        left = self.term()
-        while self.current_token and self.current_token.type in (ADD, SUB):
-            token = self.current_token
-            self.eat(token.type)
-            right = self.term()
-            left = BinaryOp(left, right, token)
-        return left
 
 
 class NodeVisitor(object):
