@@ -1,18 +1,43 @@
 '''
 A simple interpreter which can evaluate integer arithmetic expression.
 Code is refactored into Lexer, Parser and Interpreter.
+
+Code sample:
+BEGIN
+    BEGIN
+        number := 2;
+        a := number;
+        b := 10 * a + 10 * number / 4;
+        c := a - - b
+    END;
+    x := 11;
+END.
+
 Grammars ->
-    expr   : term ((ADD | SUB) term)*
-    term   : factor ((MUL | DIV) factor)*
-    factor : INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+    program             : compound_statement DOT
+    compound_statement  : BEGIN statement_list END
+    statement_list      : statement | statement SEMI statement_list
+    statement           : compound_statement | assignment | empty
+    assignment          : VAR ASSIGN expr
+    expr                : term ((ADD | SUB) term)*
+    term                : factor ((MUL | DIV) factor)*
+    factor              : INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
 '''
+import re
+
+
 EOF = 'EOF'
+SEMI = 'SEMI'
+DOT = 'DOT'
+KEY_WORDS = (BEGIN, END) = ('BEGIN', 'END')
+
 INTEGER = 'INTEGER'
-ADD, SUB, MUL, DIV = ('ADD', 'SUB', 'MUL', 'DIV')
+VAR = 'VAR'
+
+BINARY_OP = (ADD, SUB, MUL, DIV, ASSIGN) = ('ADD', 'SUB', 'MUL', 'DIV', 'ASSIGN')
+UNARY_OP = (UNARY_ADD, UNARY_SUB) = ('UNARY_ADD', 'UNARY_SUB')
+
 L_PAR, R_PAR = ('L_PAR', 'R_PAR')
-UNARY_ADD, UNARY_SUB = ('UNARY_ADD', 'UNARY_SUB')
-UNARY_OP = (UNARY_ADD, UNARY_SUB)
-BINARY_OP = (ADD, SUB, MUL, DIV)
 
 class Token(object):
     '''
@@ -34,34 +59,74 @@ class Lexer(object):
     Scanner: get tokens from the code
     '''
     def __init__(self, text):
-        self.text = self.del_spaces(text)
+        # in case text is not a string, such as None or a integer
+        self.text = self.del_spaces(text) if isinstance(text, str) else ''
         self.len = len(self.text)
         self.pos = 0
-        self.current_char = self.text[0] if self.text else None
         self.current_token = None
+        self.peeked = None
+    
+    @property
+    def non_scanned(self):
+        '''
+        The part of the input code that has not been tokenized
+        '''
+        # it is safe even if self.text is ''
+        return self.text[self.pos:]
+
+    @property
+    def scanned(self):
+        '''
+        The part of the input code that has been tokenized
+        '''
+        # it is safe even if self.text is ''
+        return self.text[0:self.pos]
+
+    @property
+    def current_char(self):
+        return self.text[self.pos] if self.pos<self.len else None
 
     @staticmethod
     def del_spaces(text):
-        for char in ' \t\r\n':
-            text = text.replace(char, '')
+        text, _ = re.subn('\s', '', text)
         return text
 
     #### scanner code
     def error(self, message):
         raise Exception(message)
 
-    def advance(self):
-        self.pos += 1
-        if self.pos > self.len-1:
-            self.current_char = None
-        else:
-            self.current_char = self.text[self.pos]
+    def advance(self, steps=1):
+        self.pos += steps
 
     def integer(self):
         start = self.pos
         while self.current_char and self.current_char.isdigit():
             self.advance()
         return int(self.text[start:self.pos])
+
+    def keyword(self):
+        for word in KEY_WORDS:
+            if self.non_scanned.startswith(word):
+                self.peeked = Token(word, word)
+                return True
+        return False
+
+    def variable(self):
+        pattern = re.compile(r'^\w+')
+        match = pattern.match(self.non_scanned)
+        if match:
+            var = match.group()
+            self.peeked = Token(VAR, var)
+            return True
+        else:
+            return False
+
+    def peek(self):
+        if self.non_scanned.startswith(':='):
+            self.peeked = Token(ASSIGN, ':=')
+            return True
+        else:
+            return self.keyword() or self.variable()
 
     def get_next_token(self):
         if not self.current_char:
@@ -70,14 +135,18 @@ class Lexer(object):
         next_token = None
         if self.current_char.isdigit():
             next_token = Token(INTEGER, self.integer())
+        elif self.peek():
+            next_token = self.peeked
+            value = next_token.value
+            self.advance(steps=len(value))
         else:
             if self.current_char == '+':
-                if self.current_token and self.current_token.type in (R_PAR, INTEGER):
+                if self.current_token and self.current_token.type in (R_PAR, INTEGER, VAR):
                     next_token = Token(ADD, '+')
                 else:
                     next_token = Token(UNARY_ADD, '+')
             elif self.current_char == '-':
-                if self.current_token and self.current_token.type in (R_PAR, INTEGER):
+                if self.current_token and self.current_token.type in (R_PAR, INTEGER, VAR):
                     next_token = Token(SUB, '-')
                 else:
                     next_token = Token(UNARY_SUB, '-')
@@ -89,6 +158,10 @@ class Lexer(object):
                 next_token = Token(L_PAR, '(')
             elif self.current_char == ')':
                 next_token = Token(R_PAR, ')')
+            elif self.current_char == '.':
+                next_token = Token(DOT, '.')
+            elif self.current_char == ';':
+                next_token = Token(SEMI, ';')
             self.advance()
 
         if next_token:

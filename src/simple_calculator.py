@@ -7,6 +7,9 @@ Grammars ->
     term   : factor ((MUL | DIV) factor)*
     factor : INTEGER | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
 '''
+import re
+
+
 EOF = 'EOF'
 INTEGER = 'INTEGER'
 ADD, SUB, MUL, DIV = ('ADD', 'SUB', 'MUL', 'DIV')
@@ -35,17 +38,20 @@ class Lexer(object):
     Scanner: get tokens from the code
     '''
     def __init__(self, text):
-        self.text = self.del_spaces(text)
+        # in case text is not a string, such as None or a integer
+        self.text = self.del_spaces(text) if isinstance(text, str) else ''
         self.len = len(self.text)
         self.pos = 0
-        self.current_char = self.text[0] if self.text else None
         self.current_token = None
 
     @staticmethod
     def del_spaces(text):
-        for char in ' \t\r\n':
-            text = text.replace(char, '')
+        text, _ = re.subn('\s', '', text)
         return text
+
+    @property
+    def current_char(self):
+        return self.text[self.pos] if self.pos<self.len else None
 
     #### scanner code
     def error(self, message):
@@ -53,10 +59,6 @@ class Lexer(object):
 
     def advance(self):
         self.pos += 1
-        if self.pos > self.len-1:
-            self.current_char = None
-        else:
-            self.current_char = self.text[self.pos]
 
     def integer(self):
         start = self.pos
