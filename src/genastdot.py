@@ -44,13 +44,13 @@ class ASTVisualizer(NodeVisitor):
             self.dot_body.append(s)
 
     def visit_UnaryOp(self, node):
-        s = '  node{} [label="unary {}"]\n'.format(self.ncount, node.op.value)
+        s = '  node{} [label="unary {}"]\n'.format(self.ncount, node.token.value)
         self.dot_body.append(s)
         node._num = self.ncount
         self.ncount += 1
 
-        self.visit(node.expr)
-        s = '  node{} -> node{}\n'.format(node._num, node.expr._num)
+        self.visit(node.operand)
+        s = '  node{} -> node{}\n'.format(node._num, node.operand._num)
         self.dot_body.append(s)
 
     def visit_CompoundOp(self, node):

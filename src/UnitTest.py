@@ -45,8 +45,8 @@ class InterpreterTest(unittest.TestCase):
         }
 
         self.spi_lexer_tests = {
-            'BEGIN b := 10 * a + 10 * number / 4; END.' : [
-                Token(BEGIN, 'BEGIN'),
+            'BEGIN b := 10 * a + 10 * number DIV 4; END.' : [
+                Token(BEGIN, 'begin'),
                 Token(VAR, 'b'),
                 Token(ASSIGN, ':='),
                 Token(INTEGER, 10),
@@ -56,15 +56,26 @@ class InterpreterTest(unittest.TestCase):
                 Token(INTEGER, 10),
                 Token(MUL, '*'),
                 Token(VAR, 'number'),
-                Token(DIV, '/'),
+                Token(DIV, 'div'),
                 Token(INTEGER, 4),
                 Token(SEMI, ';'),
-                Token(END, 'END'),
+                Token(END, 'end'),
                 Token(DOT, '.'),
             ]
         }
         self.spi_cases = {
-            'BEGIN BEGIN x := 2; END; number := x + 10; END.': {'x': 2, 'number': 12}
+            'BEGIN BEGIN x := 2; END; number := x + 10; END.': {'x': 2, 'number': 12},
+            '''
+            BEGIN 
+                BEGIN 
+                    number := 2; 
+                    a := NumBer; 
+                    B := 10 * a + 10 * NUMBER DIV 4; 
+                    c := a - - b 
+                end; 
+                x := 11;
+            END.
+            ''' : {"a": 2, "x": 11, "c": 27, "b": 25, "number": 2}
         }
 
         super(InterpreterTest, self).__init__(methodName)

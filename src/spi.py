@@ -24,6 +24,7 @@ Grammars ->
     factor              : INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
 '''
 import re
+import sys
 import logging
 
 logging.getLogger().setLevel(logging.NOTSET)
@@ -33,12 +34,12 @@ EOF = 'EOF'
 SEMI = 'SEMI'
 EMPTY = 'EMPTY'
 DOT = 'DOT'
-KEY_WORDS = (BEGIN, END) = ('BEGIN', 'END')
+KEY_WORDS = (BEGIN, END, DIV) = ('begin', 'end', 'div')
 
 INTEGER = 'INTEGER'
 VAR = 'VAR'
 
-BINARY_OP = (ADD, SUB, MUL, DIV, ASSIGN) = ('ADD', 'SUB', 'MUL', 'DIV', 'ASSIGN')
+BINARY_OP = (ADD, SUB, MUL, DIV, ASSIGN) = ('ADD', 'SUB', 'MUL', 'div', 'ASSIGN')
 UNARY_OP = (UNARY_ADD, UNARY_SUB) = ('UNARY_ADD', 'UNARY_SUB')
 NARY_OP = (COMPOUND, ) = ('COMPOUND', )
 
@@ -63,9 +64,10 @@ class Lexer(object):
     '''
     Scanner: get tokens from the code
     '''
+    blank_pattern = re.compile(r'^\s+')
     def __init__(self, text):
         # in case text is not a string, such as None or a integer
-        self.text = self.del_spaces(text) if isinstance(text, str) else ''
+        self.text = text.strip().lower() if isinstance(text, str) else ''
         self.len = len(self.text)
         self.pos = 0
         self.current_token = None
@@ -91,17 +93,16 @@ class Lexer(object):
     def current_char(self):
         return self.text[self.pos] if self.pos<self.len else None
 
-    @staticmethod
-    def del_spaces(text):
-        text, _ = re.subn('\s', '', text)
-        return text
-
     #### scanner code
     def error(self, message):
         raise Exception(message)
 
     def advance(self, steps=1):
         self.pos += steps
+        if self.pos > self.len:
+            self.pos = self.len-1
+        while self.pos<self.len and self.blank_pattern.match(self.current_char):
+            self.pos += 1
 
     def integer(self):
         start = self.pos
@@ -109,29 +110,28 @@ class Lexer(object):
             self.advance()
         return int(self.text[start:self.pos])
 
-    def keyword(self):
-        for word in KEY_WORDS:
-            if self.non_scanned.startswith(word):
-                self.peeked = Token(word, word)
-                return True
-        return False
-
-    def variable(self):
-        pattern = re.compile(r'^\w+')
+    def try_get_identifier(self):
+        pattern = re.compile(r'^[_a-z]\w*')
         match = pattern.match(self.non_scanned)
         if match:
-            var = match.group()
-            self.peeked = Token(VAR, var)
-            return True
+            identifier = match.group()
+            return identifier
         else:
-            return False
+            return None
 
     def peek(self):
         if self.non_scanned.startswith(':='):
             self.peeked = Token(ASSIGN, ':=')
             return True
-        else:
-            return self.keyword() or self.variable()
+
+        idf = self.try_get_identifier()
+        if idf:
+            if idf in KEY_WORDS:
+                self.peeked = Token(idf, idf)
+            else:
+                self.peeked = Token(VAR, idf)
+            return True
+        return False
 
     def get_next_token(self):
         if not self.current_char:
@@ -157,8 +157,6 @@ class Lexer(object):
                     next_token = Token(UNARY_SUB, '-')
             elif self.current_char == '*':
                 next_token = Token(MUL, '*')
-            elif self.current_char == '/':
-                next_token = Token(DIV, '/')
             elif self.current_char == '(':
                 next_token = Token(L_PAR, '(')
             elif self.current_char == ')':
@@ -552,14 +550,11 @@ class Interpreter(NodeVisitor):
             op = lambda x,y: x/y
         elif token.type == ASSIGN:
             op = lambda x,y: self.save(x, y)
-            left = self.visit(ast.left)
-            right = self.visit(ast.right)
-            return op(left, right)
         else:
             raise Exception("Unknown token: {}".format(token))
         
         left = self.visit(ast.left)
-        if isinstance(ast.left, Variable):
+        if isinstance(ast.left, Variable) and token.type != ASSIGN:
             left = self.lookup(left)
         right = self.visit(ast.right)
         if isinstance(ast.right, Variable):
@@ -579,29 +574,37 @@ class Interpreter(NodeVisitor):
     def kickoff(self):
         return self.visit(self.ast)
 
-def evaluate(text=None):
+def evaluate(file=None):
     '''
     Shortcut to evaluate a simple pascal program
     '''
-    text = open('pascal.txt').read()
+    if not file:
+        file = 'pascal_statements.txt'
+    with open(file) as fd:
+        text = fd.read()
     lexer = Lexer(text)
+
+    # while True:
+    #     token = lexer.get_next_token()
+    #     print token
+    #     if token.type == EOF:
+    #         break
+
     parser = Parser(lexer)
     ast = parser.parse()
     interpreter = Interpreter(ast)
     interpreter.kickoff()
-    return interpreter
+    return interpreter.getSymbols()
 
 def main():
-    while True:
-        text = raw_input("pascal> ")
-        if text == 'exit':
-            return
-        if not text:
-            continue
-        try:
-            print evaluate(text)
-        except Exception, exp:
-            print str(exp)
+    if len(sys.argv)!=2:
+        print 'Usage: python spi.py <pascal source file>'
+        return 
+    try:
+        symbol_table = evaluate(sys.argv[1])
+        print symbol_table
+    except Exception, exp:
+        print str(exp)
 
 
 if __name__ == "__main__":
