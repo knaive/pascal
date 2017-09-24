@@ -1,0 +1,1 @@
+BEGIN BEGIN x := 2; END; number := x + 10; END.

@@ -24,6 +24,9 @@ Grammars ->
     factor              : INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
 '''
 import re
+import logging
+
+logging.getLogger().setLevel(logging.NOTSET)
 
 
 EOF = 'EOF'
@@ -37,7 +40,7 @@ VAR = 'VAR'
 
 BINARY_OP = (ADD, SUB, MUL, DIV, ASSIGN) = ('ADD', 'SUB', 'MUL', 'DIV', 'ASSIGN')
 UNARY_OP = (UNARY_ADD, UNARY_SUB) = ('UNARY_ADD', 'UNARY_SUB')
-COMPOUND = 'COMPOUND'
+NARY_OP = (COMPOUND, ) = ('COMPOUND', )
 
 L_PAR, R_PAR = ('L_PAR', 'R_PAR')
 
@@ -168,13 +171,13 @@ class Lexer(object):
 
         if next_token:
             self.current_token = next_token
-            # print next_token
             return next_token
 
         self.error('Unrecognized char: {0}'.format(self.current_char))
         return Token(EOF, None)
 
 
+# AST base class and derived classes begin here
 class AST(object):
     '''
     Abstract Syntax Tree
@@ -182,11 +185,28 @@ class AST(object):
     pass
 
 
+class Empty(AST):
+    def __init__(self, token):
+        self.token = token
+
+
 class Num(AST):
     '''
     Number node in abstract syntax tree
     '''
     def __init__(self, token):
+        if token.type != INTEGER:
+            raise Exception("Token mismatch: expected {0}, got {1}".format(INTEGER, token))
+        self.token = token
+
+
+class Variable(AST):
+    '''
+    Variable node in AST
+    '''
+    def __init__(self, token):
+        if token.type != VAR:
+            raise Exception("Token mismatch: expected {0}, got {1}".format(VAR, str(token)))
         self.token = token
 
 
@@ -195,6 +215,8 @@ class UnaryOp(AST):
     Unary operator node in AST
     '''
     def __init__(self, token, operand):
+        if token.type not in UNARY_OP:
+            raise Exception("Token mismatch: expected unary, got {}".format(token))
         self.token = token
         self.operand = operand
 
@@ -203,44 +225,46 @@ class BinaryOp(AST):
     '''
     Binary operator node in AST
     '''
-    def __init__(self, left, right, op):
+    def __init__(self, left, right, token):
+        if token.type not in BINARY_OP:
+            raise Exception("Token mismatch: expected binary, got {}".format(token))
         self.left = left
         self.right = right
-        self.op = self.token = op
+        self.op = self.token = token
 
-class NaryOp(AST):
+
+class CompoundOp(AST):
     '''
     Operator with more than 2 operands in AST
     '''
-    def __init__(self, operands, op):
+    def __init__(self, operands, token):
         '''
         operands: a list containing the operands by the order left to right
         '''
+        if token.type not in NARY_OP:
+            raise Exception("Token mismatch: expected nary, got {}".format(token))
         self.operands = operands
-        self.op = self.token = op
+        self.op = self.token = token
 
-class Variable(AST):
-    '''
-    Variable node in AST
-    '''
-    def __init__(self, token):
-        self.token = token
-
-class Empty(AST):
-    def __init__(self, token):
-        self.token = token
+# AST base class and derived classes end here
 
 
 class SymbolTable(object):
-    _table = {}
+    def __init__(self):
+        self.table = {}
 
-    @classmethod
-    def save(cls, var_name, value):
-        cls._table[var_name] = value
+    def save(self, var_name, value):
+        self.table[var_name] = value
+        return value
     
-    @classmethod
-    def lookup(cls, var_name):
-        return cls._table.get(var_name, None)
+    def lookup(self, var_name):
+        if var_name not in self.table:
+            raise Exception("Name {} is not defined".format(var_name))
+        return self.table.get(var_name)
+
+    def getSymbols(self):
+        import json
+        return json.dumps(self.table)
 
 
 class Parser(object):
@@ -271,14 +295,18 @@ class Parser(object):
         '''
         Try to get the next token with type token_type
         '''
+        saved_token = self.current_token
         if self.current_token.type == token_type:
             if self.peeked_tokens:
                 self.current_token = self.peeked_tokens[0]
                 self.peeked_tokens.remove(self.current_token)
             else:
                 self.current_token = self.lexer.get_next_token()
+            logging.info("Eat token %s", self.current_token)
         else:
             self.error('Unexpected token: {0}. Expected: {1}'.format(self.current_token, token_type))
+        return saved_token
+        
     
     def peek(self):
         token = self.lexer.get_next_token()
@@ -294,18 +322,26 @@ class Parser(object):
         return root
     
     def compound_statement(self):
+        '''
+        compound_statement: BEGIN statement_list END
+        '''
         self.eat(BEGIN)
         st_list = []
         self.statement_list(st_list)
         self.eat(END)
         token = Token(COMPOUND, 'COMPOUND')
-        return NaryOp(st_list, token)
+        return CompoundOp(st_list, token)
     
     def statement_list(self, st_list):
+        '''
+        statement_list: statement | statement SEMI statement_list
+        '''
         st = self.statement()
         st_list.append(st)
         if self.current_token.type != SEMI:
             return st_list
+
+        self.eat(SEMI)
         self.statement_list(st_list)
     
     def statement(self):
@@ -314,7 +350,7 @@ class Parser(object):
         '''
         # compound_satement next
         if self.current_token.type == BEGIN:
-            return self.compound_statement
+            return self.compound_statement()
         # assignment next
         elif self.current_token.type == VAR:
             return self.assignment()
@@ -335,8 +371,8 @@ class Parser(object):
         return assign
 
     def variable(self):
-        var = self.eat(VAR)
-        return Variable(var)
+        token = self.eat(VAR)
+        return Variable(token)
 
     def expr(self):
         """
@@ -432,7 +468,8 @@ class RPNConverter(NodeVisitor):
 
 class ListExpressionConverter(NodeVisitor):
     '''
-    Convert AST to List Expression
+    Convert AST to List Expression, such as:
+    1 + 2 => (+ 1 2)
     '''
     def __init__(self, ast):
         '''
@@ -446,75 +483,117 @@ class ListExpressionConverter(NodeVisitor):
         '''
         return self.visit(self.ast)
     
+    def visit_Num(self, ast):
+        return '{0}'.format(ast.token.value)
+
+    def visit_UnaryOp(self, ast):
+        operand = self.visit(ast.operand)
+        return '({0} {1})'.format(ast.token.value, operand)
+    
     def visit_BinaryOp(self, ast):
         op = ast.token.value
         left = self.visit(ast.left)
         right = self.visit(ast.right)
         return '({0} {1} {2})'.format(op, left, right)
-    
-    def visit_UnaryOp(self, ast):
-        operand = self.visit(ast.operand)
-        return '({0} {1})'.format(ast.token.value, operand)
-    
-    def visit_Num(self, ast):
-        return '{0}'.format(ast.token.value)
 
 
 class Interpreter(NodeVisitor):
     '''
-    Interpreter for simple arithmetic expression
+    Interpreter for simple pascal program
     '''
     def __init__(self, ast):
         self.ast = ast
+        self.table = SymbolTable()
     
-    def visit_BinaryOp(self, ast):
-        op = None
-        if ast.token.type == ADD:
-            op = lambda x,y: x+y
-        elif ast.token.type == SUB:
-            op = lambda x,y: x-y
-        elif ast.token.type == MUL:
-            op = lambda x,y: x*y
-        elif ast.token.type == DIV:
-            op = lambda x,y: x/y
-        else:
-            raise Exception("Unknown token: " + ast.token.type)
-        
-        left = self.visit(ast.left)
-        right = self.visit(ast.right)
-        return op(left, right)
-    
+    def save(self, var_name, value):
+        return self.table.save(var_name, value)
+    def lookup(self, var_name):
+        return self.table.lookup(var_name)
+    def getSymbols(self):
+        return self.table.getSymbols()
+
+    def visit_Empty(self, ast):
+        return ast.token.value
+
     def visit_Num(self, ast):
         return ast.token.value
 
+    def visit_Variable(self, ast):
+        token = ast.token
+        return token.value
+
     def visit_UnaryOp(self, ast):
         op = None
-        if ast.token.type == UNARY_SUB:
+        token = ast.token
+        if token.type == UNARY_SUB:
             op = lambda x: -x 
-        elif ast.token.type == UNARY_ADD:
+        elif token.type == UNARY_ADD:
             op = lambda x: x
         else:
-            raise Exception("Unknown token: " + ast.token.type)
+            raise Exception("Unknown token: ".format(token))
         
-        value = self.visit(ast.operand)
+        operand = ast.operand
+        value = self.visit(operand)
+        if isinstance(operand, Variable):
+            value = self.lookup(value)
+        
         return op(value)
+    
+    def visit_BinaryOp(self, ast):
+        op = None
+        token = ast.token
+        if token.type == ADD:
+            op = lambda x,y: x+y
+        elif token.type == SUB:
+            op = lambda x,y: x-y
+        elif token.type == MUL:
+            op = lambda x,y: x*y
+        elif token.type == DIV:
+            op = lambda x,y: x/y
+        elif token.type == ASSIGN:
+            op = lambda x,y: self.save(x, y)
+            left = self.visit(ast.left)
+            right = self.visit(ast.right)
+            return op(left, right)
+        else:
+            raise Exception("Unknown token: {}".format(token))
+        
+        left = self.visit(ast.left)
+        if isinstance(ast.left, Variable):
+            left = self.lookup(left)
+        right = self.visit(ast.right)
+        if isinstance(ast.right, Variable):
+            right = self.lookup(right)
+        return op(left, right)
 
-    def expr(self):
+    def visit_CompoundOp(self, ast):
+        op = None
+        token = ast.token
+        if token.type == COMPOUND:
+            for ast_node in ast.operands:
+                value = self.visit(ast_node)
+            return value
+        else:
+            raise Exception("Unknown token: {}".format(token))
+
+    def kickoff(self):
         return self.visit(self.ast)
 
-def evaluate(text):
+def evaluate(text=None):
     '''
-    Shortcut to evaluate an integer arithmetic expression
+    Shortcut to evaluate a simple pascal program
     '''
+    text = open('pascal.txt').read()
     lexer = Lexer(text)
     parser = Parser(lexer)
     ast = parser.parse()
-    calc = Interpreter(ast)
-    return calc.expr()
+    interpreter = Interpreter(ast)
+    interpreter.kickoff()
+    return interpreter
 
 def main():
     while True:
-        text = raw_input("calc> ")
+        text = raw_input("pascal> ")
         if text == 'exit':
             return
         if not text:

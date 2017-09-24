@@ -5,7 +5,7 @@ from spi import Token, BEGIN, END, VAR, ASSIGN, INTEGER, DOT, SEMI, ADD, DIV, MU
 
 class InterpreterTest(unittest.TestCase):
     def __init__(self, methodName):
-        self.common_cases = {
+        self.calc_cases = {
             '1+2': 3,
             '5-1': 4,
             '2*3': 6,
@@ -20,8 +20,6 @@ class InterpreterTest(unittest.TestCase):
             '(1+2)': 3,
             '(((1+2)))': 3,
             '(1+2)*(4+2)/2+1': 10,
-        }
-        self.unary_cases = {
             '2*(-2)': -4,
             '4/-2': -2,
             '(5 + -1)/(2+ +2) + 2* -2 + 2+(-2)': -3,
@@ -31,8 +29,6 @@ class InterpreterTest(unittest.TestCase):
             '-1+1': 0,
             '5 - - - + - (3 + 4) - +2': 10
         }
-        self.spi_cases = copy.copy(self.common_cases)
-        self.spi_cases.update(self.unary_cases)
 
         self.RPN_cases = {
             '1+1': '1 1 +',
@@ -67,11 +63,14 @@ class InterpreterTest(unittest.TestCase):
                 Token(DOT, '.'),
             ]
         }
+        self.spi_cases = {
+            'BEGIN BEGIN x := 2; END; number := x + 10; END.': {'x': 2, 'number': 12}
+        }
 
         super(InterpreterTest, self).__init__(methodName)
 
     def calc_apply_test(self, text):
-        from spi import Lexer, Parser, Interpreter
+        from simple_calculator import Lexer, Parser, Interpreter
         lexer = Lexer(text)
         parser = Parser(lexer)
         ast = parser.parse()
@@ -83,26 +82,19 @@ class InterpreterTest(unittest.TestCase):
         lexer = Lexer(text)
         parser = Parser(lexer)
         ast = parser.parse()
-        calc = Interpreter(ast)
-        return calc.expr()
-
+        spi = Interpreter(ast)
+        spi.kickoff()
+        return spi.getSymbols()
 
     def test_calc(self):
         print 'calculator test cases begin'
-        for expr, result in self.common_cases.iteritems():
+        for expr, result in self.calc_cases.iteritems():
             self.assertEqual(self.calc_apply_test(expr), result)
             print '{0} = {1}'.format(expr, result)
         print 'calculator test cases end\n'
-
-    def test_spi(self):
-        print 'spi test cases begin'
-        for expr, result in self.spi_cases.iteritems():
-            self.assertEqual(self.spi_apply_test(expr), result)
-            print '{0} = {1}'.format(expr, result)
-        print 'spi test cases end\n'
     
     def test_rnpConverter(self):
-        from spi import Lexer, Parser, RPNConverter
+        from simple_calculator import Lexer, Parser, RPNConverter
         print 'rpn test cases begin'
         for expr, result in self.RPN_cases.iteritems():
             lexer = Lexer(expr)
@@ -115,7 +107,7 @@ class InterpreterTest(unittest.TestCase):
         print 'rpn test cases end\n'
 
     def test_listExprConverter(self):
-        from spi import Lexer, Parser, ListExpressionConverter
+        from simple_calculator import Lexer, Parser, ListExpressionConverter
         print 'list expr converter test cases begin'
         for expr, result in self.list_expr_converter_caseses.iteritems():
             lexer = Lexer(expr)
@@ -136,6 +128,16 @@ class InterpreterTest(unittest.TestCase):
                 self.assertEqual(token.type, value.type)
                 self.assertEqual(token.value, value.value)
                 print '{0} = {1}'.format(token, value)
+
+    def test_spi(self):
+        import json
+        print 'spi test cases begin'
+        for expr, result in self.spi_cases.iteritems():
+            spi_result = self.spi_apply_test(expr)
+            spi_result = json.loads(spi_result)
+            self.assertEqual(spi_result, result)
+            print '{0} = {1}'.format(expr, result)
+        print 'spi test cases end\n'
 
 
 if __name__ == '__main__':
