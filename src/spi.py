@@ -3,25 +3,42 @@ A simple interpreter which can evaluate integer arithmetic expression.
 Code is refactored into Lexer, Parser and Interpreter.
 
 Code sample:
-BEGIN
-    BEGIN
-        number := 2;
-        a := number;
-        b := 10 * a + 10 * number / 4;
-        c := a - - b
-    END;
-    x := 11;
-END.
+PROGRAM main;
+VAR
+   number     : INTEGER;
+   a, b, c, x : INTEGER;
+   y          : REAL;
+
+BEGIN {Part10}
+   BEGIN
+      number := 2;
+      a := number;
+      b := 10 * a + 10 * number div 4;
+      c := a - - b
+   END;
+   x := 11;
+   y := 20 / 7 + 3.14;
+   { writeln('a = ', a); }
+   { writeln('b = ', b); }
+   { writeln('c = ', c); }
+   { writeln('number = ', number); }
+   { writeln('x = ', x); }
+   { writeln('y = ', y); }
+END.  {main}
 
 Grammars ->
-    program             : compound_statement DOT
+    program             : PROGRAM name SEMI block DOT
+    block               : declarations compound_statement
+    declarations        : DECLARE_START (var_declarations SEMI)+ | EMPTY
+    var_declarations    : VAR (COMMA VAR)* COLON type_name
+    type_name           : INTEGER | REAL
     compound_statement  : BEGIN statement_list END
     statement_list      : statement | statement SEMI statement_list
     statement           : compound_statement | assignment | empty
     assignment          : VAR ASSIGN expr
     expr                : term ((ADD | SUB) term)*
-    term                : factor ((MUL | DIV) factor)*
-    factor              : INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+    term                : factor ((MUL | INT_DIV | FLOAT_DIV) factor)*
+    factor              : INTEGER_CONST | REAL_CONST | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
 '''
 import re
 import sys
@@ -34,12 +51,17 @@ EOF = 'EOF'
 SEMI = 'SEMI'
 EMPTY = 'EMPTY'
 DOT = 'DOT'
-KEY_WORDS = (BEGIN, END, DIV) = ('begin', 'end', 'div')
+COMMENT = 'COMMENT' # string starting with '{' and ending with '}'
 
-INTEGER = 'INTEGER'
+# Names of keywors are set as the same value as the literals in the program
+KEY_WORDS = (PROGRAM_START, BEGIN, END, DECLARE_START, INT_DIV, INT_TYPE, REAL_TYPE) = ('program', 'begin', 'end', 'var', 'div', 'integer', 'real')
+
+INTEGER_CONST = 'INTEGER_CONST'
+REAL_CONST = 'REAL_CONST'
 VAR = 'VAR'
 
-BINARY_OP = (ADD, SUB, MUL, DIV, ASSIGN) = ('ADD', 'SUB', 'MUL', 'div', 'ASSIGN')
+# + - * div := : ,
+BINARY_OP = (ADD, SUB, MUL, INT_DIV, FLOAT_DIV, ASSIGN, COLON, COMMA) = ('ADD', 'SUB', 'MUL', 'div', 'FLOAT_DIV', 'ASSIGN', 'COLON', 'COMMA')
 UNARY_OP = (UNARY_ADD, UNARY_SUB) = ('UNARY_ADD', 'UNARY_SUB')
 NARY_OP = (COMPOUND, ) = ('COMPOUND', )
 
@@ -101,17 +123,8 @@ class Lexer(object):
         self.pos += steps
         if self.pos > self.len:
             self.pos = self.len-1
-        while self.pos<self.len and self.blank_pattern.match(self.current_char):
-            self.pos += 1
 
-    def integer(self):
-        start = self.pos
-        while self.current_char and self.current_char.isdigit():
-            self.advance()
-        return int(self.text[start:self.pos])
-
-    def try_get_identifier(self):
-        pattern = re.compile(r'^[_a-z]\w*')
+    def _try_get(self, pattern):
         match = pattern.match(self.non_scanned)
         if match:
             identifier = match.group()
@@ -119,44 +132,93 @@ class Lexer(object):
         else:
             return None
 
+    def try_get_identifier(self):
+        pattern = re.compile(r'^[_a-z]\w*')
+        return self._try_get(pattern)
+    
+    def try_get_float(self):
+        pattern = re.compile(r'\d+\.\d+')
+        return self._try_get(pattern)
+
+    def try_get_int(self):
+        pattern = re.compile(r'\d+')
+        return self._try_get(pattern)
+
     def peek(self):
+        '''
+        Methods in peek call stack must not alter self.pos
+        '''
         if self.non_scanned.startswith(':='):
             self.peeked = Token(ASSIGN, ':=')
+            return True
+
+        if self.current_char.isdigit():
+            real = self.try_get_float()
+            if real:
+                self.peeked = Token(REAL_CONST, real)
+            else:
+                integer = self.try_get_int()
+                self.peeked = Token(INTEGER_CONST, integer)
             return True
 
         idf = self.try_get_identifier()
         if idf:
             if idf in KEY_WORDS:
-                self.peeked = Token(idf, idf)
+                if idf == 'div':
+                    self.peeked = Token(INT_DIV, idf)
+                else:
+                    # type and value of  keywords token are the same
+                    self.peeked = Token(idf, idf)
             else:
                 self.peeked = Token(VAR, idf)
             return True
         return False
+    
+    def comment(self):
+        '''
+        currently only single layer comments '{comments}' are handled, 
+        not work with comments like "{{comments}}"
+        '''
+        start = self.pos
+        while self.current_char and self.current_char != '}':
+            self.advance()
+        if self.current_char:
+            self.advance()
+            return self.text[start: self.pos+1]
+        else:
+            self.error('Invalid comment: {}'.format(self.text[start:]))
 
     def get_next_token(self):
         if not self.current_char:
             return Token(EOF, None)
 
+        while self.blank_pattern.match(self.current_char):
+            # print 'blank'
+            self.advance()
+
         next_token = None
-        if self.current_char.isdigit():
-            next_token = Token(INTEGER, self.integer())
+        if self.current_char == '{':
+            comm = self.comment()
+            next_token = Token(COMMENT, comm)
         elif self.peek():
             next_token = self.peeked
             value = next_token.value
             self.advance(steps=len(value))
         else:
             if self.current_char == '+':
-                if self.current_token and self.current_token.type in (R_PAR, INTEGER, VAR):
+                if self.current_token and self.current_token.type in (R_PAR, INTEGER_CONST, VAR):
                     next_token = Token(ADD, '+')
                 else:
                     next_token = Token(UNARY_ADD, '+')
             elif self.current_char == '-':
-                if self.current_token and self.current_token.type in (R_PAR, INTEGER, VAR):
+                if self.current_token and self.current_token.type in (R_PAR, INTEGER_CONST, VAR):
                     next_token = Token(SUB, '-')
                 else:
                     next_token = Token(UNARY_SUB, '-')
             elif self.current_char == '*':
                 next_token = Token(MUL, '*')
+            elif self.current_char == '/':
+                next_token = Token(FLOAT_DIV, '/')
             elif self.current_char == '(':
                 next_token = Token(L_PAR, '(')
             elif self.current_char == ')':
@@ -165,13 +227,18 @@ class Lexer(object):
                 next_token = Token(DOT, '.')
             elif self.current_char == ';':
                 next_token = Token(SEMI, ';')
+            elif self.current_char == ',':
+                next_token = Token(COMMA, ',')
+            # ASSIGN ':=' tested in peek(), so if ':' here is COLON
+            elif self.current_char == ':':
+                next_token = Token(COLON, ':')
             self.advance()
 
         if next_token:
             self.current_token = next_token
             return next_token
 
-        self.error('Unrecognized char: {0}'.format(self.current_char))
+        self.error('Unrecognized char: {0}.'.format(self.current_char))
         return Token(EOF, None)
 
 
@@ -193,8 +260,8 @@ class Num(AST):
     Number node in abstract syntax tree
     '''
     def __init__(self, token):
-        if token.type != INTEGER:
-            raise Exception("Token mismatch: expected {0}, got {1}".format(INTEGER, token))
+        if token.type not in (INTEGER_CONST, REAL_CONST):
+            raise Exception("Token mismatch: expected {0}, got {1}".format(INTEGER_CONST, token))
         self.token = token
 
 
@@ -207,6 +274,14 @@ class Variable(AST):
             raise Exception("Token mismatch: expected {0}, got {1}".format(VAR, str(token)))
         self.token = token
 
+class Type(AST):
+    '''
+    Type node in AST
+    '''
+    def __init__(self, token):
+        if token.type not in (INT_TYPE, REAL_TYPE):
+            raise Exception("Token mismatch: expected type token, got {1}".format(token))
+        self.token = token
 
 class UnaryOp(AST):
     '''
@@ -275,19 +350,25 @@ class Parser(object):
     statement           : compound_statement | assignment | empty
     assignment          : VAR ASSIGN expr
     expr                : term ((ADD | SUB) term)*
-    term                : factor ((MUL | DIV) factor)*
-    factor              : INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+    term                : factor ((MUL | INT_DIV) factor)*
+    factor              : INTEGER_CONST | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
     '''
     def __init__(self, lexer):
         self.lexer = lexer
         self.current_token = lexer.get_next_token()
         self.peeked_tokens = []
-
+    
     def error(self, message):
         '''
         Report an error
         '''
         raise Exception(message)
+    
+    def get_next_token(self):
+        token = self.lexer.get_next_token()
+        while token.type == COMMENT:
+            token = self.lexer.get_next_token()
+        return token
 
     def eat(self, token_type):
         '''
@@ -299,7 +380,7 @@ class Parser(object):
                 self.current_token = self.peeked_tokens[0]
                 self.peeked_tokens.remove(self.current_token)
             else:
-                self.current_token = self.lexer.get_next_token()
+                self.current_token = self.get_next_token()
             logging.info("Eat token %s", self.current_token)
         else:
             self.error('Unexpected token: {0}. Expected: {1}'.format(self.current_token, token_type))
@@ -307,7 +388,7 @@ class Parser(object):
         
     
     def peek(self):
-        token = self.lexer.get_next_token()
+        token = self.get_next_token()
         self.peeked_tokens.append(token)
         return token
 
@@ -315,9 +396,63 @@ class Parser(object):
         return self.program()
 
     def program(self):
-        root = self.compound_statement()
+        '''
+        program: PROGRAM name SEMI block DOT
+        '''
+        if self.current_token.type != PROGRAM_START:
+            self.error("Program not defined")
+        self.eat(PROGRAM_START)
+        self.eat(VAR)
+        self.eat(SEMI)
+        root = self.block()
         self.eat(DOT)
         return root
+
+    def block(self):
+        '''   
+        block: declarations compound_statement
+        '''
+        dec = self.declarations()
+        comp = self.compound_statement()
+        return CompoundOp([dec, comp], Token(COMPOUND, 'program'))
+
+    def declarations(self):
+        '''
+        declarations: DECLARE_START (var_declarations SEMI)+ | EMPTY
+        '''
+        self.eat(DECLARE_START)
+        operands = []
+        element = self.var_declarations()
+        self.eat(SEMI)
+        operands.append(element)
+        while self.current_token.type == VAR:
+            element = self.var_declarations()
+            self.eat(SEMI)
+            operands.append(element)
+        return CompoundOp(operands, Token(COMPOUND, 'VAR'))
+
+    def var_declarations(self):
+        '''
+        var_declarations: VAR (COMMA VAR)* COLON type_name
+        '''
+        left = self.variable()
+        while self.current_token.type == COMMA:
+            op = self.eat(COMMA)
+            right = self.variable()
+            left = BinaryOp(left, right, op)
+        op = self.eat(COLON)
+        typename = self.type_name()
+        return BinaryOp(left, typename, op)
+
+    def type_name(self):
+        '''
+        type_name: INT_TYPE | REAL_TYPE
+        '''
+        if self.current_token.type in (INT_TYPE, REAL_TYPE):
+            type_token =  self.eat(self.current_token.type)
+            return Type(type_token)
+        else:
+            self.error("Unknown type: {}".format(self.current_token.value))
     
     def compound_statement(self):
         '''
@@ -386,10 +521,10 @@ class Parser(object):
 
     def term(self):
         '''
-        term: factor ((MUL | DIV) factor)*
+        term: factor ((MUL | INT_DIV | FLOAT_DIV) factor)*
         '''
         left = self.factor()
-        while self.current_token.type in (MUL, DIV):
+        while self.current_token.type in (MUL, INT_DIV, FLOAT_DIV):
             token = self.current_token
             self.eat(token.type)
             right = self.factor()
@@ -398,11 +533,11 @@ class Parser(object):
 
     def factor(self):
         '''
-        factor: INTEGER | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
+        factor: INTEGER_CONST | REAL_CONST | VAR | L_PAR expr R_PAR | (UNARY_ADD | UNARY_SUB) factor
         '''
         token = self.current_token
-        if token.type == INTEGER:
-            self.eat(INTEGER)
+        if token.type in (INTEGER_CONST, REAL_CONST):
+            self.eat(token.type)
             return Num(token)
         elif token.type == VAR:
             self.eat(VAR)
@@ -546,7 +681,7 @@ class Interpreter(NodeVisitor):
             op = lambda x,y: x-y
         elif token.type == MUL:
             op = lambda x,y: x*y
-        elif token.type == DIV:
+        elif token.type == INT_DIV:
             op = lambda x,y: x/y
         elif token.type == ASSIGN:
             op = lambda x,y: self.save(x, y)
@@ -579,29 +714,30 @@ def evaluate(file=None):
     Shortcut to evaluate a simple pascal program
     '''
     if not file:
-        file = 'pascal_statements.txt'
+        file = 'code.pas'
     with open(file) as fd:
         text = fd.read()
     lexer = Lexer(text)
 
-    # while True:
-    #     token = lexer.get_next_token()
-    #     print token
-    #     if token.type == EOF:
-    #         break
+    while True:
+        token = lexer.get_next_token()
+        print token
+        if token.type == EOF:
+            break
 
-    parser = Parser(lexer)
-    ast = parser.parse()
-    interpreter = Interpreter(ast)
-    interpreter.kickoff()
-    return interpreter.getSymbols()
+    # parser = Parser(lexer)
+    # ast = parser.parse()
+    # interpreter = Interpreter(ast)
+    # interpreter.kickoff()
+    # return interpreter.getSymbols()
 
 def main():
-    if len(sys.argv)!=2:
-        print 'Usage: python spi.py <pascal source file>'
-        return 
+    # if len(sys.argv)!=2:
+    #     print 'Usage: python spi.py <pascal source file>'
+    #     return 
     try:
-        symbol_table = evaluate(sys.argv[1])
+        # symbol_table = evaluate(sys.argv[1])
+        symbol_table = evaluate()
         print symbol_table
     except Exception, exp:
         print str(exp)
