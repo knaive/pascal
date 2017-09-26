@@ -326,9 +326,12 @@ class SymbolTable(object):
     def __init__(self):
         self.table = {}
 
-    def save(self, var_name, value):
-        self.table[var_name] = value
+    def assign(self, var_name, value):
+        self.table.setdefault(var_name, [None, None])[1] = value
         return value
+
+    def declare(self, var_name, type_name):
+        self.table.setdefault(var_name, [None, None])[0] = type_name
     
     def lookup(self, var_name):
         if var_name not in self.table:
@@ -639,17 +642,26 @@ class Interpreter(NodeVisitor):
         self.table = SymbolTable()
     
     def save(self, var_name, value):
-        return self.table.save(var_name, value)
+        return self.table.assign(var_name, value)
     def lookup(self, var_name):
-        return self.table.lookup(var_name)
+        return self.table.lookup(var_name)[1]
+    def declare(self, var_name, type_name):
+        return self.table.declare(var_name, type_name)
     def getSymbols(self):
         return self.table.getSymbols()
 
     def visit_Empty(self, ast):
         return ast.token.value
 
-    def visit_Num(self, ast):
+    def visit_Type(self, ast):
         return ast.token.value
+
+    def visit_Num(self, ast):
+        if ast.token.type == INTEGER_CONST:
+            return int(ast.token.value)
+        elif ast.token.type == REAL_CONST:
+            return float(ast.token.value)
+        self.error("Error in visit_Num: get token: {}.".format(ast.token))
 
     def visit_Variable(self, ast):
         token = ast.token
@@ -683,16 +695,38 @@ class Interpreter(NodeVisitor):
             op = lambda x,y: x*y
         elif token.type == INT_DIV:
             op = lambda x,y: x/y
+        elif token.type == FLOAT_DIV:
+            op = lambda x,y: (x*1.0)/y
         elif token.type == ASSIGN:
             op = lambda x,y: self.save(x, y)
+        elif token.type == COMMA:
+            def comma(x, y):
+                if isinstance(x, list) and isinstance(y, list):
+                    return x + y
+                elif isinstance(x, list):
+                    x.append(y)
+                    return x
+                elif isinstance(y, list):
+                    y.append(x)
+                    return y
+                return [x, y]
+            op = comma
+        elif token.type == COLON:
+            def colon(x, y):
+                if isinstance(x, list):
+                    for i in x:
+                        self.declare(i, y)
+                else:
+                    self.declare(x, y)
+            op = colon
         else:
             raise Exception("Unknown token: {}".format(token))
         
         left = self.visit(ast.left)
-        if isinstance(ast.left, Variable) and token.type != ASSIGN:
+        if isinstance(ast.left, Variable) and token.type not in (ASSIGN, COLON, COMMA):
             left = self.lookup(left)
         right = self.visit(ast.right)
-        if isinstance(ast.right, Variable):
+        if isinstance(ast.right, Variable) and token.type not in (COMMA):
             right = self.lookup(right)
         return op(left, right)
 
@@ -709,10 +743,7 @@ class Interpreter(NodeVisitor):
     def kickoff(self):
         return self.visit(self.ast)
 
-def evaluate(file=None):
-    '''
-    Shortcut to evaluate a simple pascal program
-    '''
+def test_lexer(file=None):
     if not file:
         file = 'code.pas'
     with open(file) as fd:
@@ -725,11 +756,21 @@ def evaluate(file=None):
         if token.type == EOF:
             break
 
-    # parser = Parser(lexer)
-    # ast = parser.parse()
-    # interpreter = Interpreter(ast)
-    # interpreter.kickoff()
-    # return interpreter.getSymbols()
+def evaluate(file=None):
+    '''
+    Shortcut to evaluate a simple pascal program
+    '''
+    if not file:
+        file = 'code.pas'
+    with open(file) as fd:
+        text = fd.read()
+
+    lexer = Lexer(text)
+    parser = Parser(lexer)
+    ast = parser.parse()
+    interpreter = Interpreter(ast)
+    interpreter.kickoff()
+    return interpreter.getSymbols()
 
 def main():
     # if len(sys.argv)!=2:
