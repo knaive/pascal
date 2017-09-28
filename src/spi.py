@@ -687,18 +687,13 @@ class Interpreter(NodeVisitor):
     def visit_BinaryOp(self, ast):
         op = None
         token = ast.token
-        if token.type == ADD:
-            op = lambda x,y: x+y
-        elif token.type == SUB:
-            op = lambda x,y: x-y
-        elif token.type == MUL:
-            op = lambda x,y: x*y
-        elif token.type == INT_DIV:
-            op = lambda x,y: x/y
-        elif token.type == FLOAT_DIV:
-            op = lambda x,y: (x*1.0)/y
-        elif token.type == ASSIGN:
-            op = lambda x,y: self.save(x, y)
+
+        if token.type == ASSIGN:
+            left = self.visit(ast.left)
+            right = self.visit(ast.right)
+            if isinstance(ast.right, Variable):
+                right = self.lookup(right)
+            return self.save(left, right)
         elif token.type == COMMA:
             def comma(x, y):
                 if isinstance(x, list) and isinstance(y, list):
@@ -710,7 +705,9 @@ class Interpreter(NodeVisitor):
                     y.append(x)
                     return y
                 return [x, y]
-            op = comma
+            left = self.visit(ast.left)
+            right = self.visit(ast.right)
+            return comma(left, right)
         elif token.type == COLON:
             def colon(x, y):
                 if isinstance(x, list):
@@ -718,15 +715,28 @@ class Interpreter(NodeVisitor):
                         self.declare(i, y)
                 else:
                     self.declare(x, y)
-            op = colon
+            left = self.visit(ast.left)
+            right = self.visit(ast.right)
+            return colon(left, right)
+
+        if token.type == ADD:
+            op = lambda x,y: x+y
+        elif token.type == SUB:
+            op = lambda x,y: x-y
+        elif token.type == MUL:
+            op = lambda x,y: x*y
+        elif token.type == INT_DIV:
+            op = lambda x,y: x/y
+        elif token.type == FLOAT_DIV:
+            op = lambda x,y: (x*1.0)/y
         else:
             raise Exception("Unknown token: {}".format(token))
         
         left = self.visit(ast.left)
-        if isinstance(ast.left, Variable) and token.type not in (ASSIGN, COLON, COMMA):
+        if isinstance(ast.left, Variable):
             left = self.lookup(left)
         right = self.visit(ast.right)
-        if isinstance(ast.right, Variable) and token.type not in (COMMA):
+        if isinstance(ast.right, Variable):
             right = self.lookup(right)
         return op(left, right)
 
